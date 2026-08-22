@@ -1,11 +1,26 @@
-"""
-ADR Lens
+import json
+import urllib.request
 
-Calculates the FX-adjusted parity and premium/discount
-between a U.S. ADR and its foreign-listed underlying shares.
 
-First implementation: SK hynix (SKHY / KRX: 000660)
-"""
+ADR_RATIO = 10
+
+
+def get_price(symbol):
+    url = (
+        f"https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{symbol}?interval=1d&range=5d"
+    )
+
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
+
+    with urllib.request.urlopen(request) as response:
+        data = json.loads(response.read())
+
+    result = data["chart"]["result"][0]
+    return result["meta"]["regularMarketPrice"]
 
 
 def calculate_parity(foreign_price, fx_rate, adr_ratio):
@@ -16,19 +31,27 @@ def calculate_premium(adr_price, parity):
     return ((adr_price / parity) - 1) * 100
 
 
-# SK hynix example data
-skhy_price = 163.41
-krx_price = 1_730_000
-usd_krw = 1386.01
-adr_ratio = 10
+# Pull latest market data
+skhy_price = get_price("SKHY")
+krx_price = get_price("000660.KS")
+usd_krw = get_price("KRW=X")
 
-parity = calculate_parity(krx_price, usd_krw, adr_ratio)
-premium = calculate_premium(skhy_price, parity)
+parity = calculate_parity(
+    krx_price,
+    usd_krw,
+    ADR_RATIO
+)
 
-print("ADR Lens — SK hynix")
+premium = calculate_premium(
+    skhy_price,
+    parity
+)
+
+
+print("ADR Lens - SK hynix")
 print("--------------------")
 print(f"SKHY:        ${skhy_price:,.2f}")
-print(f"KRX 000660:  ₩{krx_price:,.0f}")
+print(f"KRX 000660:  KRW {krx_price:,.0f}")
 print(f"USD/KRW:     {usd_krw:,.2f}")
 print(f"ADR parity:  ${parity:,.2f}")
 print(f"ADR premium: {premium:+.2f}%")

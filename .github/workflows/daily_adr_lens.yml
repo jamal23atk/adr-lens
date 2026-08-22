@@ -1,0 +1,33 @@
+name: Daily ADR Lens
+
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-adr-lens:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run ADR Lens
+        run: python adr_lens.py
+
+      - name: Save premium history
+        run: |
+          git config user.name "adr-lens-bot"
+          git config user.email "actions@github.com"
+          git add premium_history.csv
+          git diff --cached --quiet || git commit -m "Update daily ADR premium history"
+          git push

@@ -1,141 +1,186 @@
+"""
+ADR Lens V4
+Live market-data prototype.
+
+Pulls:
+- SKHY ADR price
+- SK hynix 000660.KS price
+- USD/KRW exchange rate
+
+Then calculates ADR parity + premium/discount
+and stores observations in premium_history.csv.
+"""
+
 import csv
 import json
 import os
-import urllib.request
 from datetime import datetime, timezone
+from urllib.request import Request, urlopen
 
 
+ADR_SYMBOL = "SKHY"
+FOREIGN_SYMBOL = "000660.KS"
+FX_SYMBOL = "KRW=X"
+
+# 10 SKHY ADRs = 1 Korean SK hynix common share
 ADR_RATIO = 10
+
 HISTORY_FILE = "premium_history.csv"
 
 
-def get_price(symbol):
+def get_yahoo_price(symbol):
     url = (
         "https://query1.finance.yahoo.com/v8/finance/chart/"
-        f"{symbol}?interval=1d&range=5d"
+        + symbol
+        + "?interval=1m&range=1d"
     )
 
-    request = urllib.request.Request(
+    request = Request(
         url,
         headers={"User-Agent": "Mozilla/5.0"}
     )
 
-    with urllib.request.urlopen(request, timeout=10) as response:
-        data = json.loads(response.read())
+    with urlopen(request, timeout=10) as response:
+        data = json.loads(response.read().decode())
 
     result = data["chart"]["result"][0]
+
+    closes = result["indicators"]["quote"][0]["close"]
+
+    valid_prices = [
+        price for price in closes
+        if price is not None
+    ]
+
+    if valid_prices:
+        return float(valid_prices[-1])
+
     return float(result["meta"]["regularMarketPrice"])
 
 
-def calculate_parity(foreign_price, fx_rate, adr_ratio):
-    return foreign_price / fx_rate / adr_ratio
+def calculate_parity(foreign_price, usd_krw, adr_ratio):
+    # 10 ADRs = 1 Korean common share
+    return foreign_price / usd_krw / adr_ratio
 
 
 def calculate_premium(adr_price, parity):
     return ((adr_price / parity) - 1) * 100
 
 
-def get_previous_premium():
+def load_previous_premium():
     if not os.path.exists(HISTORY_FILE):
         return None
 
-    with open(HISTORY_FILE, "r", newline="") as file:
-        rows = list(csv.DictReader(file))
+    try:
+        with open(HISTORY_FILE, "r", newline="") as file:
+            rows = list(csv.DictReader(file))
 
-    if not rows:
+        if not rows:
+            return None
+
+        return float(rows[-1]["premium"])
+
+    except Exception:
         return None
-
-    return float(rows[-1]["premium"])
 
 
 def save_observation(
-    timestamp,
     adr_price,
     foreign_price,
-    fx_rate,
+    usd_krw,
     parity,
     premium
 ):
     file_exists = os.path.exists(HISTORY_FILE)
 
     with open(HISTORY_FILE, "a", newline="") as file:
-        fieldnames = [
-            "timestamp",
-            "skhy",
-            "krx_000660",
-            "usd_krw",
-            "parity",
-            "premium"
-        ]
-
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer = csv.writer(file)
 
         if not file_exists:
-            writer.writeheader()
+            writer.writerow([
+                "timestamp",
+                "skhy",
+                "krx_000660",
+                "usd_krw",
+                "parity",
+                "premium"
+            ])
 
-        writer.writerow({
-            "timestamp": timestamp,
-            "skhy": round(adr_price, 2),
-            "krx_000660": round(foreign_price, 2),
-            "usd_krw": round(fx_rate, 4),
-            "parity": round(parity, 4),
-            "premium": round(premium, 4)
-        })
+        writer.writerow([
+            datetime.now(timezone.utc).isoformat(),
+            round(adr_price, 4),
+            round(foreign_price, 2),
+            round(usd_krw, 4),
+            round(parity, 4),
+            round(premium, 4)
+        ])
 
 
-# Pull latest market data
-skhy_price = get_price("SKHY")
-krx_price = get_price("000660.KS")
-usd_krw = get_price("KRW=X")
+def main():
+    print("ADR Lens V4")
+    print("Fetching market data...")
+    print()
 
-# Calculate parity and premium
-parity = calculate_parity(
-    krx_price,
-    usd_krw,
-    ADR_RATIO
-)
+    try:
+        skhy_price = get_yahoo_price(ADR_SYMBOL)
+        krx_price = get_yahoo_price(FOREIGN_SYMBOL)
+        usd_krw = get_yahoo_price(FX_SYMBOL)
 
-premium = calculate_premium(
-    skhy_price,
-    parity
-)
+    except Exception as error:
+        print("MARKET DATA ERROR:")
+        print(error)
+        return
 
-previous_premium = get_previous_premium()
+    parity = calculate_parity(
+        krx_price,
+        usd_krw,
+        ADR_RATIO
+    )
 
-timestamp = datetime.now(timezone.utc).isoformat()
+    premium = calculate_premium(
+        skhy_price,
+        parity
+    )
 
-save_observation(
-    timestamp,
-    skhy_price,
-    krx_price,
-    usd_krw,
-    parity,
-    premium
-)
+    previous_premium = load_previous_premium()
 
-print()
-print("ADR Lens - SK hynix")
-print("--------------------")
-print(f"SKHY:          ${skhy_price:,.2f}")
-print(f"KRX 000660:    KRW {krx_price:,.0f}")
-print(f"USD/KRW:       {usd_krw:,.2f}")
-print(f"ADR parity:    ${parity:,.2f}")
-print(f"ADR premium:   {premium:+.2f}%")
+    print("ADR Lens - SK hynix")
+    print("------------------------------")
+    print(f"SKHY:        ${skhy_price:,.2f}")
+    print(f"KRX 000660:  KRW {krx_price:,.0f}")
+    print(f"USD/KRW:     {usd_krw:,.2f}")
+    print(f"ADR parity:  ${parity:,.2f}")
+    print(f"ADR premium: {premium:+.2f}%")
 
-if previous_premium is None:
-    print("Premium change: first observation")
-else:
-    change = premium - previous_premium
-
-    if change < 0:
-        status = "COMPRESSING"
-    elif change > 0:
-        status = "EXPANDING"
+    if previous_premium is None:
+        print("Premium change: first observation")
     else:
-        status = "UNCHANGED"
+        change = premium - previous_premium
 
-    print(f"Previous:      {previous_premium:+.2f}%")
-    print(f"Change:        {change:+.2f} percentage points")
-    print(f"Status:        {status}")
+        if change < 0:
+            status = "COMPRESSING"
+        elif change > 0:
+            status = "EXPANDING"
+        else:
+            status = "UNCHANGED"
 
-print()
+        print(
+            f"Premium change: "
+            f"{change:+.2f} percentage points "
+            f"({status})"
+        )
+
+    save_observation(
+        skhy_price,
+        krx_price,
+        usd_krw,
+        parity,
+        premium
+    )
+
+    print()
+    print("Observation saved to premium_history.csv")
+
+
+if __name__ == "__main__":
+    main()

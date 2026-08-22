@@ -6,6 +6,10 @@ ADR Lens is a market-intelligence system for identifying, measuring, and trackin
 
 **Live application:** https://adr-lens.vercel.app
 
+## Dashboard
+
+![ADR Lens Dashboard](IMG_6992.png)
+
 ---
 
 ## Overview
